@@ -3117,8 +3117,8 @@ int smblib_get_prop_batt_charge_done(struct smb_charger *chg,
 
 		if (smblib_get_fastcharge_mode(chg) == true)
 			smblib_set_fastcharge_mode(chg, false);
-	}
-	return 0;
+
+	    return 0;
 }
 
 int smblib_get_batt_current_now(struct smb_charger *chg,
@@ -10489,7 +10489,7 @@ static void smblib_charger_type_recheck(struct work_struct *work)
 		goto check_next;
     }
 	
-		if (chg->typec_port && !chg->pr_swap_in_progress) {
+	if (chg->typec_port && !chg->pr_swap_in_progress) {
 
 			/*
 			 * Schedule the work to differentiate actual removal
