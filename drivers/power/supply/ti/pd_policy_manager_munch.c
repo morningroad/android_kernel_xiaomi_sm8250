@@ -48,6 +48,21 @@
 #define PM_WORK_RUN_NORMAL_INTERVAL		500
 #define PM_WORK_RUN_QUICK_INTERVAL		200
 #define PM_WORK_RUN_CRITICAL_INTERVAL		100
+/* Stub functions to fix LLD linker undefined symbol errors */
+#include <linux/types.h>
+
+int usbpd_select_pdo(void *pd, int pdo_type, int v, int i) {
+    return -1;
+}
+
+int usbpd_get_current_state(void *pd) {
+    return 0;
+}
+
+int usbpd_fetch_pdo(void *pd, int pdo_type, int index, u32 *pdo) {
+    return -1;
+}
+
 int pd_log_count_poussin = 0;
 
 enum {
