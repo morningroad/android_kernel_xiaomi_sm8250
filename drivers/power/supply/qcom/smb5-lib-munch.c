@@ -3115,9 +3115,9 @@ int smblib_get_prop_batt_charge_done(struct smb_charger *chg,
 			return 0;
 		}
 
-		if (smblib_get_fastcharge_mode(chg) == true)
+		if (smblib_get_fastcharge_mode(chg) == true) {
 			smblib_set_fastcharge_mode(chg, false);
-
+		}
 	    return 0;
 }
 
@@ -10486,7 +10486,7 @@ static void smblib_charger_type_recheck(struct work_struct *work)
 	}
 
 	if (smblib_get_prop_dfp_mode(chg) != POWER_SUPPLY_TYPEC_NONE) {
-		goto check_next;
+		    goto check_next;	
     }
 	
 	if (chg->typec_port && !chg->pr_swap_in_progress) {
