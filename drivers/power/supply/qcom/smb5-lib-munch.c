@@ -3108,16 +3108,17 @@ int smblib_get_prop_batt_charge_done(struct smb_charger *chg,
 			vote(chg->awake_votable, CHG_AWAKE_VOTER, false, 0);
 		}
 
-		if (chg->power_good_en) {
-			if ((smblib_get_fastcharge_mode(chg) == true)
-				&& (pval.intval >= 98))
-				smblib_set_fastcharge_mode(chg, false);
-				return 0;
-		}
-
-		if (smblib_get_fastcharge_mode(chg) == true)
+	if (chg->power_good_en) {
+		if ((smblib_get_fastcharge_mode(chg) == true) && (pval.intval >= 98))
 			smblib_set_fastcharge_mode(chg, false);
+		return 0;
 	}
+
+	if (smblib_get_fastcharge_mode(chg) == true) {
+		smblib_set_fastcharge_mode(chg, false);
+	}
+
+	} // 这个大括号对应最外层的 if (val->intval == 1) {
 	return 0;
 }
 
