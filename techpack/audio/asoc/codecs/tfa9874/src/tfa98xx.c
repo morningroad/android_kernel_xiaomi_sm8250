@@ -3184,14 +3184,14 @@ static int tfa98xx_mute(struct snd_soc_dai *dai, int mute, int stream)
 		mutex_lock(&tfa98xx->dsp_lock);
 #ifdef TFA_NON_DSP_SOLUTION
 #if defined(CONFIG_TARGET_PRODUCT_MUNCH)
-		if (strcmp (tfa_cont_profile_name (tfa98xx, tfa98xx_mixer_profile), "handset") != 0
-				&& !(strstr(tfaContProfileName(tfa98xx->tfa->cnt, tfa98xx->tfa->dev_idx, tfa98xx_mixer_profile), ".standby") != NULL)) {
-			tfa98xx_send_mute_cmd(TFA_KCONTROL_VALUE_ENABLED);
-			msleep(60);
-		}
-else
+	    if (strcmp(tfa_cont_profile_name(tfa98xx, tfa98xx_mixer_profile), "handset") != 0 &&
+	    !(strstr(tfaContProfileName(tfa98xx->tfa->cnt, tfa98xx->tfa->dev_idx, tfa98xx_mixer_profile), ".standby") != NULL)) {
 		tfa98xx_send_mute_cmd(TFA_KCONTROL_VALUE_ENABLED);
 		msleep(60);
+	    } else {
+		tfa98xx_send_mute_cmd(TFA_KCONTROL_VALUE_ENABLED);
+		msleep(60);
+	    }
 #endif
 #endif
 		tfa_dev_stop(tfa98xx->tfa);
