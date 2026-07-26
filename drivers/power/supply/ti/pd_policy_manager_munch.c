@@ -48,18 +48,19 @@
 #define PM_WORK_RUN_NORMAL_INTERVAL		500
 #define PM_WORK_RUN_QUICK_INTERVAL		200
 #define PM_WORK_RUN_CRITICAL_INTERVAL		100
-/* Stub functions to fix LLD linker undefined symbol errors */
-#include <linux/types.h>
+/* Stub functions to fix LLD linker undefined symbol errors with exact header types */
+struct usbpd;
+struct usbpd_pdo;
 
-int usbpd_select_pdo(void *pd, int pdo_type, int v, int i) {
+int usbpd_select_pdo(struct usbpd *pd, int pdo, int uv, int ua) {
     return -1;
 }
 
-int usbpd_get_current_state(void *pd) {
+int usbpd_get_current_state(struct usbpd *pd) {
     return 0;
 }
 
-int usbpd_fetch_pdo(void *pd, int pdo_type, int index, u32 *pdo) {
+int usbpd_fetch_pdo(struct usbpd *pd, struct usbpd_pdo *pdos) {
     return -1;
 }
 
