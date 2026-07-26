@@ -3095,13 +3095,14 @@ int smblib_get_prop_batt_charge_done(struct smb_charger *chg,
 		return rc;
 	}
 	/*  if charge is done, clear CHG_AWAKE_VOTER */
-	if (val->intval == 1) {
+		if (val->intval == 1) {
 #ifdef CONFIG_DUAL_FUEL_GAUGE_BQ27Z561
 		Dual_Fg_Reset_Batt_Ctrl_gpio_default();
 #endif
 		rc = smblib_get_prop_batt_capacity(chg, &pval);
 		if (rc < 0)
 			smblib_err(chg, "Couldn't get batt capacity rc=%d\n", rc);
+
 		if (pval.intval >= 98) {
 			/* when charge done, set bark timer to 128s to decrease wakeups */
 			smblib_set_wdog_bark_timer(chg, BARK_TIMER_LONG);
@@ -3109,16 +3110,18 @@ int smblib_get_prop_batt_charge_done(struct smb_charger *chg,
 		}
 
 		if (chg->power_good_en) {
-			    if ((smblib_get_fastcharge_mode(chg) == true) 
-				    && (pval.intval >= 98))
-				    smblib_set_fastcharge_mode(chg, false);
+			if ((smblib_get_fastcharge_mode(chg) == true) && (pval.intval >= 98)) {
+				smblib_set_fastcharge_mode(chg, false);
+			}
 			return 0;
 		}
 
-		if (smblib_get_fastcharge_mode(chg) == true) 
-			    smblib_set_fastcharge_mode(chg, false);
-	    return 0;
-}
+		if (smblib_get_fastcharge_mode(chg) == true) {
+			smblib_set_fastcharge_mode(chg, false);
+		}
+
+		return 0;
+	}
 
 int smblib_get_batt_current_now(struct smb_charger *chg,
 					union power_supply_propval *val)
