@@ -73,11 +73,19 @@ mkdir -p "$CCACHE_DIR"
 # ==========================================
 if [ "$ENABLE_KSU" -eq 1 ]; then
     echo "==========================================="
-    echo " [*] Initializing KernelSU (ReSukiSU) Setup"
+    echo " [*] Initializing KernelSU (BakaSU) Setup"
     echo "==========================================="
-    echo "[*] Downloading and running ReSukiSU remote setup script..."
-    curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
-    echo "[+] KernelSU setup finished."
+    echo "[*] Downloading and running BakaSU remote setup script..."
+    curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
+    echo "[+] BakaSU setup finished."
+
+    echo "==========================================="
+    echo " [*] Initializing VFS (Hybrid Mount) Setup"
+    echo "==========================================="
+    echo "[*] Downloading and running VFS remote setup script..."
+    curl -LSs "https://raw.githubusercontent.com/Hybrid-Mount/meta-hybrid_mount/dev/module/vfs/setup.sh" | bash
+    git apply hybrid-mount.patch
+    echo "[+] VFS setup finished."
 fi
 
 # ==========================================
@@ -209,8 +217,13 @@ build_target() {
         echo "[*] Injecting KernelSU & SUSFS configurations..."
         scripts/config --file "${OUT_DIR}/.config" \
             -e KSU \
-            -e THREAD_INFO_IN_TASK \
-            -e KSU_SUSFS
+            -e KSU_SUSFS \
+            -e KSU_TOOLKIT_SUPPORT \
+            -e KSU_MULTI_MANAGER_SUPPORT \
+            -e THREAD_INFO_IN_TASK
+        echo "[*] Injecting Hybrid Mount configurations..."
+        scripts/config --file "${OUT_DIR}/.config" \
+            -e HYBRIDMOUNT
     fi
 
     # 3. MIUI configurations
@@ -294,9 +307,9 @@ build_target() {
         fi
         
         # 确定 ZIP 文件名
-        local KSU_ZIP_STR="NoKernelSU"
+        local KSU_ZIP_STR="default"
         if [ "$ENABLE_KSU" -eq 1 ]; then
-            KSU_ZIP_STR="ReSukiSU-SuSFS"
+            KSU_ZIP_STR="BakaSU-SuSFS"
         fi
         local GIT_COMMIT_ID=$(git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
         local OS_UPPER=$(echo "$OS_TYPE" | tr '[:lower:]' '[:upper:]')
