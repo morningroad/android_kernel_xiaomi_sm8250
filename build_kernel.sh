@@ -260,8 +260,8 @@ build_target() {
             -e MILLET_CORE \
             -e MILLET_HS \
             -e BINDER_PRIO \
-            -d REKERNEL \
-            -d REKERNEL_NETWORK
+            -e REKERNEL \
+            -e REKERNEL_NETWORK
     fi
 
     # 4. AOSP configurations
