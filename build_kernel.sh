@@ -87,15 +87,6 @@ if [ "$ENABLE_KSU" -eq 1 ]; then
     git apply hybrid-mount.patch
     echo "[+] VFS setup finished."
 fi
-# ==========================================
-# NoMount Setup
-# ==========================================
-
-    echo "==========================================="
-    echo " [*] Initializing NoMount Setup"
-    echo "==========================================="
-    curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh | bash -
-    echo "[+] NoMount setup finished."
     
 # ==========================================
 # NoMount Setup
