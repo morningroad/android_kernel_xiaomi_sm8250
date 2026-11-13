@@ -111,6 +111,47 @@ sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/se
 echo "[+] Baseband-guard setup finished."
 echo "==========================================="
 
+
+# --- Configuration ---
+KERNEL_DIR="${KERNEL_DIR:-$(pwd)}"
+NOMOUNT_REPO="https://github.com/Bouteillepleine/NoMount-Suite.git" # Replace with actual repo URL
+NOMOUNT_DIR="/tmp/nomount"
+DEFCONFIG="arch/arm64/configs/${DEFCONFIG}" # Replace with your defconfig path
+
+# 1. Clone NoMount cleanly
+rm -rf "$NOMOUNT_DIR"
+git clone --depth=1 "$NOMOUNT_REPO" "$NOMOUNT_DIR"
+
+# 2. Navigate to kernel root
+cd "$KERNEL_DIR"
+
+# 3. Apply the kernel integration patch (with dry-run check first)
+echo "Checking patch compatibility..."
+patch -p1 --dry-run < "$NOMOUNT_DIR/patches/nomount_kernel_integration.patch"
+
+echo "Applying NoMount patch..."
+patch -p1 < "$NOMOUNT_DIR/patches/nomount_kernel_integration.patch"
+
+# 4. Copy source files into fs/
+echo "Copying source files..."
+cp -v "$NOMOUNT_DIR/src/nomount.c" "$NOMOUNT_DIR/src/nomount.h" fs/
+
+# 5. Enable CONFIG_NOMOUNT in defconfig (if not already present)
+if [ -f "$DEFCONFIG" ]; then
+    if ! grep -q "^CONFIG_NOMOUNT=y" "$DEFCONFIG"; then
+        echo "CONFIG_NOMOUNT=y" >> "$DEFCONFIG"
+        echo "Added CONFIG_NOMOUNT=y to $DEFCONFIG"
+    else
+        echo "CONFIG_NOMOUNT=y is already enabled in $DEFCONFIG"
+    fi
+else
+    echo "Warning: Defconfig not found at $DEFCONFIG. Enable CONFIG_NOMOUNT=y manually."
+fi
+
+# 6. Clean up temporary clone
+rm -rf "$NOMOUNT_DIR"
+echo "NoMount integration complete!"
+
 # ==========================================
 # AnyKernel3 Setup
 # ==========================================
