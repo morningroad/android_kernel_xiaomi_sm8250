@@ -127,14 +127,14 @@ cd "$KERNEL_DIR"
 
 # 3. Apply the kernel integration patch (with dry-run check first)
 echo "Checking patch compatibility..."
-patch -p1 --dry-run < "$NOMOUNT_DIR/patches/nomount_kernel_integration.patch"
+patch -p1 --dry-run < "$NOMOUNT_DIR/hookless/patches/nomount_kernel_integration.patch"
 
 echo "Applying NoMount patch..."
-patch -p1 < "$NOMOUNT_DIR/patches/nomount_kernel_integration.patch"
+patch -p1 < "$NOMOUNT_DIR/hookless/patches/nomount_kernel_integration.patch"
 
 # 4. Copy source files into fs/
 echo "Copying source files..."
-cp -v "$NOMOUNT_DIR/src/nomount.c" "$NOMOUNT_DIR/src/nomount.h" fs/
+cp -v "$NOMOUNT_DIR/hookless/src/nomount.c" "$NOMOUNT_DIR/hookless/src/nomount.h" fs/
 
 # 5. Enable CONFIG_NOMOUNT in defconfig (if not already present)
 if [ -f "$DEFCONFIG" ]; then
