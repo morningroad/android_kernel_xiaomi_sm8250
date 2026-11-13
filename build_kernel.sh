@@ -111,12 +111,11 @@ sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/se
 echo "[+] Baseband-guard setup finished."
 echo "==========================================="
 
-
+# ==========================================
 # --- Configuration ---
 KERNEL_DIR="${KERNEL_DIR:-$(pwd)}"
 NOMOUNT_REPO="https://github.com/Bouteillepleine/NoMount-Suite.git" # Replace with actual repo URL
 NOMOUNT_DIR="/tmp/nomount"
-DEFCONFIG="arch/arm64/configs/${DEFCONFIG}" # Replace with your defconfig path
 
 # 1. Clone NoMount cleanly
 rm -rf "$NOMOUNT_DIR"
@@ -151,6 +150,7 @@ fi
 # 6. Clean up temporary clone
 rm -rf "$NOMOUNT_DIR"
 echo "NoMount integration complete!"
+# ==========================================
 
 # ==========================================
 # AnyKernel3 Setup
