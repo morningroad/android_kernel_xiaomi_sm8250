@@ -113,6 +113,7 @@ echo "==========================================="
 
 # ==========================================
 # --- Configuration ---
+: << 'EOF'
 KERNEL_DIR="${KERNEL_DIR:-$(pwd)}"
 NOMOUNT_REPO="https://github.com/Bouteillepleine/NoMount-Suite.git" # Replace with actual repo URL
 NOMOUNT_DIR="/tmp/nomount"
@@ -150,6 +151,8 @@ fi
 # 6. Clean up temporary clone
 rm -rf "$NOMOUNT_DIR"
 echo "NoMount integration complete!"
+done
+EOF
 # ==========================================
 
 # ==========================================
