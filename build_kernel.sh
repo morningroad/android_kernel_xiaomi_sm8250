@@ -85,8 +85,7 @@ if [ "$ENABLE_KSU" -eq 1 ]; then
     echo "[*] Downloading and running VFS remote setup script..."
     curl -LSs "https://raw.githubusercontent.com/Hybrid-Mount/meta-hybrid_mount/dev/module/vfs/setup.sh" | bash
     echo "[+] VFS setup finished."
-fi
-    
+
 # ==========================================
 # NoMount Setup
 # ==========================================
@@ -96,6 +95,8 @@ fi
     echo "==========================================="
     curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh | bash -
     echo "[+] NoMount setup finished."
+fi
+    
     
 # ==========================================
 # Baseband-guard Setup
@@ -111,7 +112,7 @@ sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/se
 echo "[+] Baseband-guard setup finished."
 echo "==========================================="
 
-# ==========================================
+# =======跳过执行===================================
 # --- Configuration ---
 : << 'EOF'
 KERNEL_DIR="${KERNEL_DIR:-$(pwd)}"
@@ -153,7 +154,7 @@ rm -rf "$NOMOUNT_DIR"
 echo "NoMount integration complete!"
 done
 EOF
-# ==========================================
+# ========跳过执行==================================
 
 # ==========================================
 # AnyKernel3 Setup
@@ -362,7 +363,7 @@ build_target() {
         # 确定 ZIP 文件名
         local KSU_ZIP_STR="default"
         if [ "$ENABLE_KSU" -eq 1 ]; then
-            KSU_ZIP_STR="ReSukiSU-SuSFS-NoMount"
+            KSU_ZIP_STR="BakaSU-SuSFS-NoMount"
         fi
         local GIT_COMMIT_ID=$(git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
         local OS_UPPER=$(echo "$OS_TYPE" | tr '[:lower:]' '[:upper:]')
