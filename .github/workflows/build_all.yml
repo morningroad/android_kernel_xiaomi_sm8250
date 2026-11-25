@@ -1,0 +1,199 @@
+name: Build All Devices Kernel (Matrix Parallel + Release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish to GitHub Releases'
+        required: true
+        type: boolean
+        default: true
+      droidspaces:
+        description: 'Enable Droidspaces (LXC/Docker) support for all builds'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Resolve BakaSU SHA
+    runs-on: ubuntu-24.04
+    outputs:
+      bakasu_sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Resolve BakaSU main SHA
+        id: sha
+        run: |
+          SHA=$(git ls-remote https://github.com/Baka-SU/BakaSU.git refs/heads/main | awk '{print $1}')
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "BakaSU pinned SHA: $SHA"
+
+  build-matrix:
+    name: Build ${{ matrix.device }} | ${{ matrix.ksu && 'KSU' || 'NoKSU' }} (AOSP + MIUI)
+    needs: prepare
+    runs-on: ubuntu-24.04
+    env:
+      BAKASU_PIN_SHA: ${{ needs.prepare.outputs.bakasu_sha }}
+    strategy:
+      fail-fast: false
+      matrix:
+        device:
+          - alioth
+          - apollo
+          - cas
+          - cmi
+          - dagu
+          - elish
+          - enuma
+          - lmi
+          - munch
+          - pipa
+          - psyche
+          - thyme
+          - umi
+        ksu:
+          - true
+          - false
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex gawk \
+            git gnupg gperf libncurses-dev libssl-dev libxml2 libxml2-utils \
+            lzop rsync schedtool squashfs-tools xsltproc zip zlib1g-dev \
+            python-is-python3
+
+          mkdir -p ~/.cache/ccache_mikernel
+          ccache -M 2G
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache_mikernel
+          key: ${{ runner.os }}-kernel-ccache-${{ matrix.device }}-${{ matrix.ksu && 'ksu' || 'noksu' }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-kernel-ccache-${{ matrix.device }}-${{ matrix.ksu && 'ksu' || 'noksu' }}-
+            ${{ runner.os }}-kernel-ccache-${{ matrix.device }}-
+            ${{ runner.os }}-kernel-ccache-
+
+      - name: Setup zyc-clang 16 Toolchain
+        run: |
+          mkdir -p $HOME/zyc-clang
+          cd $HOME/zyc-clang
+          wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
+          tar -zxvf Clang-16.0.6-20260807.tar.gz
+          rm -f Clang-16.0.6-20260807.tar.gz
+
+      - name: Run Build Script
+        run: |
+          chmod +x build_kernel.sh
+          
+          ARGS="${{ matrix.device }}"
+          if [ "${{ matrix.ksu }}" = "true" ]; then
+            ARGS="$ARGS ksu"
+          fi
+
+          if [ "${{ github.event.inputs.droidspaces }}" == "true" ]; then
+            ARGS="$ARGS droidspaces"
+          fi
+          
+          echo "Executing command: ./build_kernel.sh $ARGS"
+          ./build_kernel.sh $ARGS
+
+      - name: Capture BakaSU Version
+        id: bakasu
+        run: |
+          if [ -f .bakasu_version ]; then
+            BAKASU_VERSION=$(cat .bakasu_version)
+            BAKASU_VERSION_CODE=$(cat .bakasu_version_code 2>/dev/null || echo "unknown")
+            echo "BAKASU_VERSION=$BAKASU_VERSION" >> $GITHUB_OUTPUT
+            echo "BAKASU_VERSION_CODE=$BAKASU_VERSION_CODE" >> $GITHUB_OUTPUT
+            echo "BakaSU v$BAKASU_VERSION_CODE ($BAKASU_VERSION)" > "bakasu_version_${{ matrix.device }}_${{ matrix.ksu && 'ksu' || 'noksu' }}.txt"
+            echo "BakaSU version: $BAKASU_VERSION (code $BAKASU_VERSION_CODE)"
+          else
+            echo "BAKASU_VERSION=not enabled" >> $GITHUB_OUTPUT
+            echo "BAKASU_VERSION_CODE=not enabled" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Kernel Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: TanpaNama-${{ matrix.device }}-${{ matrix.ksu && 'KSU' || 'NoKSU' }}-${{ github.run_id }}
+          path: |
+            TanpaNama_*.zip
+            bakasu_version_*.txt
+          compression-level: 0 # kernel flash zip is already zip format, no need for double compression
+
+  release:
+    name: Publish GitHub Release
+    if: ${{ github.event.inputs.publish_release == 'true' || github.event.inputs.publish_release == true }}
+    needs: build-matrix
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Generate Release Info
+        id: vars
+        run: |
+          echo "BUILD_DATE=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=v$(date +'%Y%m%d')-${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+          echo "SHA_SHORT=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_kernels
+          pattern: TanpaNama-*-${{ github.run_id }}
+          merge-multiple: true
+
+      - name: Collect BakaSU Versions
+        id: bakasu_release
+        run: |
+          # Collect unique BakaSU versions across device/ksu artifacts
+          if ls all_kernels/bakasu_version_*.txt >/dev/null 2>&1; then
+            # each file is the version string; collect unique non-"not enabled"
+            BAKASU_VERSIONS=$(cat all_kernels/bakasu_version_*.txt | sort -u | grep -v '^not enabled$' | paste -sd ', ' -)
+            if [ -z "$BAKASU_VERSIONS" ]; then
+              BAKASU_VERSIONS="not enabled in any build"
+            fi
+            echo "BAKASU_VERSIONS=$BAKASU_VERSIONS" >> $GITHUB_OUTPUT
+            echo "$BAKASU_VERSIONS" > all_kernels/BAKASU_VERSIONS.txt
+          else
+            echo "BAKASU_VERSIONS=not enabled" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.TAG_NAME }}
+          name: "TanpaNama Build - ${{ steps.vars.outputs.BUILD_DATE }} (${{ steps.vars.outputs.SHA_SHORT }})"
+          body: |
+            ## Automated Kernel Release
+            
+            - **Build Date:** ${{ steps.vars.outputs.BUILD_DATE }}
+            - **Commit SHA:** `${{ steps.vars.outputs.SHA_SHORT }}`
+            - **BakaSU Version Code / Name:** ${{ steps.bakasu_release.outputs.BAKASU_VERSIONS }}
+            - **Supported Devices:** `alioth, apollo, cas, cmi, dagu, elish, enuma, lmi, munch, pipa, psyche, thyme, umi`
+            
+            ---
+            ### Flashable ZIP Instructions:
+            - **MIUI**: for stock MIUI / HyperOS or MIUI-based third-party ROMs.
+            - **AOSP**: for AOSP-based ROMs like LineageOS.
+            - **BakaSU-SuSFS-NoMount**: integrates BakaSU with SuSFS and NoMount.
+            - **Droidspaces**: enables LXC/Docker container support (optional, via the droidspaces input).
+            - **NoKernelSU**: clean kernel, flash Magisk or APatch manually.
+          files: all_kernels/*.zip

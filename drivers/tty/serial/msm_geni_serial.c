@@ -2445,6 +2445,12 @@ static void msm_geni_serial_shutdown(struct uart_port *uport)
 		msm_geni_serial_stop_tx(uport);
 	}
 
+#if !defined(CONFIG_MACH_XIAOMI_ELISH) && !defined(CONFIG_MACH_XIAOMI_ENUMA) && \
+	!defined(CONFIG_MACH_XIAOMI_DAGU) && !defined(CONFIG_MACH_XIAOMI_PIPA)
+	if (likely(!uart_console(uport)))
+		disable_irq(uport->irq);
+#endif
+
 	if (!uart_console(uport)) {
 		if (msm_port->ioctl_count) {
 			int i;
@@ -2583,6 +2589,12 @@ static int msm_geni_serial_startup(struct uart_port *uport)
 			goto exit_startup;
 		}
 	}
+
+#if !defined(CONFIG_MACH_XIAOMI_ELISH) && !defined(CONFIG_MACH_XIAOMI_ENUMA) && \
+	!defined(CONFIG_MACH_XIAOMI_DAGU) && !defined(CONFIG_MACH_XIAOMI_PIPA)
+	if (likely(!uart_console(uport)))
+		enable_irq(uport->irq);
+#endif
 
 	/*
 	 * Ensure that all the port configuration writes complete
@@ -3181,10 +3193,23 @@ OF_EARLYCON_DECLARE(msm_geni_serial, "qcom,msm-geni-console",
 
 static int console_register(struct uart_driver *drv)
 {
+#ifdef CONFIG_FASTBOOT_CMD_CTRL_UART
+	if (!is_early_cons_enabled) {
+		pr_info("ignore console register\n");
+		return 0;
+	}
+#endif
+
 	return uart_register_driver(drv);
 }
 static void console_unregister(struct uart_driver *drv)
 {
+#ifdef CONFIG_FASTBOOT_CMD_CTRL_UART
+	if (!is_early_cons_enabled) {
+		pr_info("ignore console unregister\n");
+		return;
+	}
+#endif
 	uart_unregister_driver(drv);
 }
 
@@ -3425,6 +3450,16 @@ static int msm_geni_serial_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
+#ifdef CONFIG_FASTBOOT_CMD_CTRL_UART
+		/*if earlycon is not enabled, we should ignore console
+		  driver prob*/
+	if (!is_early_cons_enabled &&
+		(!strcmp(id->compatible, "qcom,msm-geni-console"))) {
+			pr_info("ignore cons prob\n");
+		return -ENODEV;
+	}
+#endif
+
 	if (pdev->dev.of_node) {
 		if (drv->cons) {
 			line = of_alias_get_id(pdev->dev.of_node, "serial");
@@ -3631,6 +3666,18 @@ static int msm_geni_serial_probe(struct platform_device *pdev)
 	irq_set_status_flags(uport->irq, IRQ_NOAUTOEN);
 	ret = devm_request_irq(uport->dev, uport->irq, msm_geni_serial_isr,
 				IRQF_TRIGGER_HIGH, dev_port->name, uport);
+
+#if !defined(CONFIG_MACH_XIAOMI_ELISH) && !defined(CONFIG_MACH_XIAOMI_ENUMA) && \
+	!defined(CONFIG_MACH_XIAOMI_DAGU) && !defined(CONFIG_MACH_XIAOMI_PIPA)
+	if (likely(!uart_console(uport))) {
+		/*
+		 * irq should disable untill msm_geni_serial_port_setup
+		 * called in msm_geni_serial_startup.
+		 */
+		disable_irq(uport->irq);
+	}
+#endif
+
 	if (ret) {
 		dev_err(uport->dev, "%s: Failed to get IRQ ret %d\n",
 							__func__, ret);
@@ -3712,6 +3759,7 @@ exit_wakeup_unregister:
 		wakeup_source_unregister(dev_port->geni_wake);
 exit_geni_serial_probe:
 	IPC_LOG_MSG(dev_port->ipc_log_misc, "%s: ret:%d\n", __func__, ret);
+	wakeup_source_unregister(dev_port->geni_wake);
 	return ret;
 }
 

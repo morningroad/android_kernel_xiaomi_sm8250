@@ -19,6 +19,9 @@
  *
  *  Adaptive scheduling granularity, math enhancements by Peter Zijlstra
  *  Copyright (C) 2007 Red Hat, Inc., Peter Zijlstra
+ *
+ *  Burst-Oriented Response Enhancer (BORE) CPU Scheduler
+ *  Copyright (C) 2021-2024 Masahito Suzuki <firelzrd@gmail.com>
  */
 #include "sched.h"
 
@@ -133,6 +136,8 @@ unsigned int normalized_sysctl_sched_wakeup_granularity	= 1000000UL;
 
 const_debug unsigned int sysctl_sched_migration_cost	= 500000UL;
 DEFINE_PER_CPU_READ_MOSTLY(int, sched_load_boost);
+
+
 
 #ifdef CONFIG_SMP
 /*
@@ -707,7 +712,6 @@ static inline u64 calc_delta_fair(u64 delta, struct sched_entity *se)
 {
 	if (unlikely(se->load.weight != NICE_0_LOAD))
 		delta = __calc_delta(delta, NICE_0_LOAD, &se->load);
-
 	return delta;
 }
 
@@ -768,7 +772,7 @@ static u64 sched_vslice(struct cfs_rq *cfs_rq, struct sched_entity *se)
 #include "pelt.h"
 #ifdef CONFIG_SMP
 
-static int select_idle_sibling(struct task_struct *p, int prev_cpu, int cpu);
+static int select_idle_sibling(struct task_struct *p, int prev_cpu, int cpu, int sync);
 static unsigned long task_h_load(struct task_struct *p);
 static unsigned long capacity_of(int cpu);
 
@@ -904,6 +908,10 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	if (entity_is_task(curr)) {
 		struct task_struct *curtask = task_of(curr);
 
+#ifdef CONFIG_SCHED_BORE
+		/* Charge this interval at its old weight; change only future service. */
+		update_curr_bore(curtask, delta_exec);
+#endif
 		trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
 		cgroup_account_cputime(curtask, delta_exec);
 		account_group_exec_runtime(curtask, delta_exec);
@@ -1811,7 +1819,7 @@ assign:
 		 */
 		local_irq_disable();
 		env->dst_cpu = select_idle_sibling(env->p, env->src_cpu,
-						   env->dst_cpu);
+						   env->dst_cpu, 0);
 		local_irq_enable();
 	}
 
@@ -2974,9 +2982,35 @@ void reweight_task(struct task_struct *p, int prio)
 	struct cfs_rq *cfs_rq = cfs_rq_of(se);
 	struct load_weight *load = &se->load;
 	unsigned long weight = scale_load(sched_prio_to_weight[prio]);
+#ifdef CONFIG_SCHED_BORE
+	bool stop_update = p->bore.stop_update;
 
-	reweight_entity(cfs_rq, se, weight, weight);
+	/* reweight_entity() can call update_curr(); suppress nested reweight. */
+	p->bore.stop_update = true;
+	if (idle_policy(p->policy)) {
+		weight = scale_load(WEIGHT_IDLEPRIO);
+		prio = -1;
+	}
+#endif
+#if defined(CONFIG_SCHED_BORE) && defined(CONFIG_SMP)
+	/* Migrated remote wakeups have not attached to the destination PELT yet. */
+	if (!se->avg.last_update_time) {
+		u32 divider = LOAD_AVG_MAX - 1024 + se->avg.period_contrib;
+
+		se->runnable_weight = weight;
+		update_load_set(load, weight);
+		se->avg.load_avg = div_u64(se_weight(se) * se->avg.load_sum, divider);
+		se->avg.runnable_load_avg =
+			div_u64(se_runnable(se) * se->avg.runnable_load_sum, divider);
+	} else
+#endif
+		reweight_entity(cfs_rq, se, weight, weight);
+#ifdef CONFIG_SCHED_BORE
+	p->bore.stop_update = stop_update;
+	load->inv_weight = prio < 0 ? WMULT_IDLEPRIO : sched_prio_to_wmult[prio];
+#else
 	load->inv_weight = sched_prio_to_wmult[prio];
+#endif
 }
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -5638,11 +5672,29 @@ static void set_next_buddy(struct sched_entity *se);
  * decreased. We remove the task from the rbtree and
  * update the fair scheduling stats:
  */
+#ifdef CONFIG_SCHED_POC_SELECTOR
+#include "poc_sync.h"
+#endif
+
 static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 {
 	struct cfs_rq *cfs_rq;
 	struct sched_entity *se = &p->se;
 	int task_sleep = flags & DEQUEUE_SLEEP;
+
+#ifdef CONFIG_SCHED_POC_SELECTOR
+	if (flags & DEQUEUE_SLEEP)
+		poc_sync_note_sleep(rq, p);
+#endif
+
+#ifdef CONFIG_SCHED_BORE
+	if (task_sleep) {
+		cfs_rq = cfs_rq_of(se);
+		if (cfs_rq->curr == se)
+			update_curr(cfs_rq);
+		restart_burst_bore(p);
+	}
+#endif // CONFIG_SCHED_BORE
 
 	/*
 	 * The code below (indirectly) updates schedutil which looks at
@@ -6703,10 +6755,62 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, int t
 /*
  * Try and locate an idle core/thread in the LLC cache domain.
  */
-static int select_idle_sibling(struct task_struct *p, int prev, int target)
+#ifdef CONFIG_SCHED_SMT
+static inline bool is_idle_core(int cpu)
+{
+	int sibling;
+
+	for_each_cpu(sibling, cpu_smt_mask(cpu)) {
+		if (!available_idle_cpu(sibling) || cpu_isolated(sibling))
+			return false;
+	}
+	return true;
+}
+#else
+static inline bool is_idle_core(int cpu)
+{
+	return available_idle_cpu(cpu) && !cpu_isolated(cpu);
+}
+#endif
+
+#ifdef CONFIG_SCHED_POC_SELECTOR
+#include "poc_selector.c"
+#endif
+
+/*
+ * Try and locate an idle core/thread in the LLC cache domain.
+ */
+static int select_idle_sibling(struct task_struct *p, int prev, int target, int sync)
 {
 	struct sched_domain *sd;
 	int i, recent_used_cpu;
+
+	/* Check a recently used CPU as a potential idle candidate: */
+	recent_used_cpu = p->recent_used_cpu;
+	p->recent_used_cpu = prev;
+	if (recent_used_cpu != prev &&
+	    recent_used_cpu != target &&
+	    cpus_share_cache(recent_used_cpu, target) &&
+	    available_idle_cpu(recent_used_cpu) &&
+	    cpumask_test_cpu(recent_used_cpu, &p->cpus_allowed)) {
+#ifdef CONFIG_SCHED_POC_SELECTOR
+		if (poc_sync_recent_ok())
+#endif
+			if ((unsigned int)recent_used_cpu < nr_cpumask_bits &&
+			    is_idle_core(recent_used_cpu))
+				return recent_used_cpu;
+	} else {
+		recent_used_cpu = -1;
+	}
+
+#ifdef CONFIG_SCHED_POC_SELECTOR
+	if (static_branch_likely(&poc_selector_active) &&
+	    is_idle_core(target)) {
+		poc_count(POC_LV1T);
+		poc_commit_cpu(target);
+		return target;
+	}
+#endif
 
 	if (available_idle_cpu(target) && !cpu_isolated(target))
 		return target;
@@ -6718,24 +6822,21 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
 			available_idle_cpu(prev) && !cpu_isolated(prev))
 		return prev;
 
-	/* Check a recently used CPU as a potential idle candidate: */
-	recent_used_cpu = p->recent_used_cpu;
-	if (recent_used_cpu != prev &&
-	    recent_used_cpu != target &&
-	    cpus_share_cache(recent_used_cpu, target) &&
-	    available_idle_cpu(recent_used_cpu) &&
-	    cpumask_test_cpu(p->recent_used_cpu, &p->cpus_allowed)) {
-		/*
-		 * Replace recent_used_cpu with prev as it is a potential
-		 * candidate for the next wake:
-		 */
-		p->recent_used_cpu = prev;
-		return recent_used_cpu;
-	}
-
 	sd = rcu_dereference(per_cpu(sd_llc, target));
 	if (!sd)
 		return target;
+
+#ifdef CONFIG_SCHED_POC_SELECTOR
+	{
+		int poc_cpu = poc_select_idle_sibling(p, prev, target,
+						      recent_used_cpu);
+
+		if (likely(poc_cpu >= 0))
+			return poc_cpu;
+		if (unlikely(poc_cpu == -2))
+			goto give_up;
+	}
+#endif
 
 	i = select_idle_core(p, sd, target);
 	if ((unsigned)i < nr_cpumask_bits)
@@ -6749,6 +6850,10 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
 	if ((unsigned)i < nr_cpumask_bits)
 		return i;
 
+#ifdef CONFIG_SCHED_POC_SELECTOR
+give_up:
+	target = poc_last_resort(prev, target);
+#endif
 	return target;
 }
 
@@ -8024,7 +8129,12 @@ sd_loop:
 	} else if (sd_flag & SD_BALANCE_WAKE) { /* XXX always ? */
 		/* Fast path */
 
-		new_cpu = select_idle_sibling(p, prev_cpu, new_cpu);
+#ifdef CONFIG_SCHED_POC_SELECTOR
+		if (static_branch_likely(&poc_selector_active))
+			new_cpu = poc_select_wake_cpu(p, prev_cpu, new_cpu, sync);
+		else
+#endif
+		new_cpu = select_idle_sibling(p, prev_cpu, new_cpu, sync);
 
 		if (want_affine)
 			current->recent_used_cpu = cpu;
@@ -8190,6 +8300,11 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	struct cfs_rq *cfs_rq = task_cfs_rq(curr);
 	int scale = cfs_rq->nr_running >= sched_nr_latency;
 	int next_buddy_marked = 0;
+
+#ifdef CONFIG_SCHED_POC_SELECTOR
+	if (poc_sync_wakee_waits(rq, curr, p, wake_flags))
+		return;
+#endif
 
 	if (unlikely(se == pse))
 		return;
@@ -8436,24 +8551,31 @@ static void yield_task_fair(struct rq *rq)
 	/*
 	 * Are we the only task in the tree?
 	 */
+#if !defined(CONFIG_SCHED_BORE)
 	if (unlikely(rq->nr_running == 1))
 		return;
 
 	clear_buddies(cfs_rq, se);
+#endif // CONFIG_SCHED_BORE
 
-	if (curr->policy != SCHED_BATCH) {
-		update_rq_clock(rq);
-		/*
-		 * Update run-time statistics of the 'current'.
-		 */
-		update_curr(cfs_rq);
-		/*
-		 * Tell update_rq_clock() that we've just updated,
-		 * so we don't do microscopic update in schedule()
-		 * and double the fastpath cost.
-		 */
-		rq_clock_skip_update(rq);
-	}
+	update_rq_clock(rq);
+	/*
+	 * Update run-time statistics of the 'current'.
+	 */
+	update_curr(cfs_rq);
+#ifdef CONFIG_SCHED_BORE
+	restart_burst_bore(curr);
+	if (unlikely(rq->nr_running == 1))
+		return;
+
+	clear_buddies(cfs_rq, se);
+#endif // CONFIG_SCHED_BORE
+	/*
+	 * Tell update_rq_clock() that we've just updated,
+	 * so we don't do microscopic update in schedule()
+	 * and double the fastpath cost.
+	 */
+	rq_clock_skip_update(rq);
 
 	set_skip_buddy(se);
 }
@@ -8612,6 +8734,8 @@ enum group_type {
 #define LBF_NOHZ_AGAIN	0x20
 #define LBF_IGNORE_BIG_TASKS 0x100
 #define LBF_IGNORE_PREFERRED_CLUSTER_TASKS 0x200
+#define LBF_MOVED 0x40
+#define LBF_DST_REDIRECTED 0x80
 
 struct lb_env {
 	struct sched_domain	*sd;
@@ -8754,6 +8878,18 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 	int tsk_cache_hot;
 
 	lockdep_assert_held(&env->src_rq->lock);
+
+	/*
+	 * Never migrate a task that is not actually queued on the source
+	 * rq (se->on_rq == 0).  cfs_tasks may still hold its group_node
+	 * when it was the last task dequeued (account_entity_dequeue only
+	 * list_del_init()s when nr_running > 1).  detach_task() would then
+	 * dequeue_entity() it again, and __dequeue_entity() has no
+	 * on_rq guard on 4.19, so rb_erase_cached() on a node that is
+	 * already gone corrupts the cfs_rq rbtree (NULL deref).
+	 */
+	if (!p->se.on_rq)
+		return 0;
 
 	/*
 	 * We do not migrate tasks that are:
@@ -8919,6 +9055,73 @@ static struct task_struct *detach_one_task(struct lb_env *env)
 	return NULL;
 }
 
+#define SCHED_CAMBYSES_AUTHOR	"Masahito Suzuki"
+#define SCHED_CAMBYSES_PROGNAME	"Cambyses CFS Load Balancer modification"
+#define SCHED_CAMBYSES_VERSION	"0.7.2"
+
+static int __init sched_cambyses_init(void)
+{
+	printk(KERN_INFO "%s %s by %s\n",
+		SCHED_CAMBYSES_PROGNAME, SCHED_CAMBYSES_VERSION,
+		SCHED_CAMBYSES_AUTHOR);
+
+	return 0;
+}
+late_initcall(sched_cambyses_init);
+
+/*
+ * The cheapest candidate a scan passed over because it did not fit the
+ * remaining imbalance budget.  If the scan ends up taking nothing at all,
+ * detach_tasks() concedes to this one so the balance still makes progress.
+ *
+ * Scoped to a single detach_tasks() call on purpose: the rq lock is dropped
+ * between the caller's more_balance retries, so a task remembered across them
+ * could be gone by the time it is used.
+ */
+struct lb_concession {
+	struct task_struct	*p;
+	unsigned long		cost;
+};
+
+/*
+ * 4.19 does not have the 6.x shr_bound() helper; provide the small inline
+ * used by lb_cost_fits() to relax the imbalance comparison.  It is a strict
+ * right shift guarded against shifts wider than the word.
+ */
+static inline unsigned long shr_bound(unsigned long val, unsigned long shift)
+{
+	if (shift >= BITS_PER_LONG)
+		return 0;
+	return val >> shift;
+}
+
+static inline bool lb_concede_cheapest(struct lb_env *env)
+{
+	return sched_feat(LB_CONCEDE_CHEAPEST) && env->idle != CPU_NOT_IDLE &&
+	       !(env->flags & LBF_DST_REDIRECTED);
+}
+
+static bool lb_cost_fits(struct lb_env *env, struct lb_concession *concession,
+			 struct task_struct *p, unsigned long cost)
+{
+	if (!lb_concede_cheapest(env))
+		return shr_bound(cost, env->sd->nr_balance_failed) <= env->imbalance;
+
+	if (cost <= env->imbalance)
+		return true;
+
+	/* Reject overshoots that would increase imbalance in reverse direction. */
+	if (cost - env->imbalance >= env->imbalance)
+		return false;
+
+	if (!concession->p || cost < concession->cost) {
+		concession->p = p;
+		concession->cost = cost;
+	}
+
+	return false;
+}
+
 static const unsigned int sched_nr_migrate_break = 32;
 
 /*
@@ -8930,6 +9133,7 @@ static const unsigned int sched_nr_migrate_break = 32;
 static int detach_tasks(struct lb_env *env)
 {
 	struct list_head *tasks = &env->src_rq->cfs_tasks;
+	struct lb_concession concession = { NULL, 0 };
 	struct task_struct *p;
 	unsigned long load = 0;
 	int detached = 0;
@@ -8989,7 +9193,6 @@ redo:
 		 */
 		load = max_t(unsigned long, task_h_load(p), 1);
 
-
 		if (sched_feat(LB_MIN) && load < 16 && !env->sd->nr_balance_failed)
 			goto next;
 
@@ -9004,16 +9207,20 @@ redo:
 		 * And load based checks are skipped for prefer_spread in
 		 * finding busiest group, ignore the task's h_load.
 		 */
-
 		if (!env->prefer_spread &&
-			((cpu_rq(env->src_cpu)->nr_running > 2) ||
-			(env->flags & LBF_IGNORE_BIG_TASKS)) &&
-			((load / 2) > env->imbalance))
+		    ((cpu_rq(env->src_cpu)->nr_running > 2) ||
+		     (env->flags & LBF_IGNORE_BIG_TASKS)) &&
+		    ((load / 2) > env->imbalance))
+			goto next;
+
+		/* Make sure that we don't migrate too much load. */
+		if (!lb_cost_fits(env, &concession, p, load))
 			goto next;
 
 		detach_task(p, env);
 		list_add(&p->se.group_node, &env->tasks);
 
+		env->flags |= LBF_MOVED;
 		detached++;
 		env->imbalance -= load;
 
@@ -9050,7 +9257,28 @@ next:
 		env->flags &= ~(LBF_IGNORE_BIG_TASKS |
 				LBF_IGNORE_PREFERRED_CLUSTER_TASKS);
 		env->loop = orig_loop;
+		concession.p = NULL;
+		concession.cost = 0;
 		goto redo;
+	}
+
+	/*
+	 * Nothing fit the budget and nothing has moved yet, so concede to the
+	 * smallest overshoot the scan found rather than leave the imbalance
+	 * standing.  migrate_load has no other way out: imbalanced_active_balance()
+	 * escalates for migrate_task only, so a task larger than the imbalance
+	 * would otherwise never move.
+	 *
+	 * This is the whole reason LB_STRICT_BUDGET can drop the upstream
+	 * relaxation.  LBF_MOVED makes it fire at most once per balance operation.
+	 */
+	if (concession.p && !(env->flags & LBF_MOVED)) {
+		detach_task(concession.p, env);
+		list_add(&concession.p->se.group_node, &env->tasks);
+
+		env->imbalance -= concession.cost;
+		env->flags |= LBF_MOVED;
+		detached++;
 	}
 
 	/*
@@ -10856,6 +11084,7 @@ more_balance:
 			env.dst_rq	 = cpu_rq(env.new_dst_cpu);
 			env.dst_cpu	 = env.new_dst_cpu;
 			env.flags	&= ~LBF_DST_PINNED;
+			env.flags	|= LBF_DST_REDIRECTED;
 			env.loop	 = 0;
 			env.loop_break	 = sched_nr_migrate_break;
 
@@ -12309,6 +12538,10 @@ static void switched_from_fair(struct rq *rq, struct task_struct *p)
 static void switched_to_fair(struct rq *rq, struct task_struct *p)
 {
 	attach_task_cfs_rq(p);
+#ifdef CONFIG_SCHED_BORE
+	reset_task_bore(p);
+	reweight_task(p, effective_prio_bore(p));
+#endif
 
 	if (task_on_rq_queued(p)) {
 		/*

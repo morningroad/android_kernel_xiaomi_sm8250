@@ -227,8 +227,11 @@ struct tcp_sock {
 	} rack;
 	u16	advmss;		/* Advertised MSS			*/
 	u8	compressed_ack;
-	u8	tlp_retrans:1,	/* TLP is a retransmission */
-		unused_1:7;
+	u8	dup_ack_counter:2,
+		tlp_retrans:1,	/* TLP is a retransmission */
+		fast_ack_mode:2, /* which fast ack mode ? */
+		tlp_orig_data_app_limited:1, /* app-limited before TLP rtx? */
+		unused_1:2;
 	u32	chrono_start;	/* Start time in jiffies of a TCP chrono */
 	u32	chrono_stat[3];	/* Time in jiffies for chrono_stat stats */
 	u8	chrono_type:2,	/* current chronograph type */
@@ -263,6 +266,7 @@ struct tcp_sock {
 	u32	mdev_max_us;	/* maximal mdev for the last rtt period	*/
 	u32	rttvar_us;	/* smoothed mdev_max			*/
 	u32	rtt_seq;	/* sequence number to update rttvar	*/
+	u32	seq_rtt_us;
 	struct  minmax rtt_min;
 
 	u32	packets_out;	/* Packets which are "in flight"	*/

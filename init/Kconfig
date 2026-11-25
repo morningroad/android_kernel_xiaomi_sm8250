@@ -361,6 +361,12 @@ config CROSS_MEMORY_ATTACH
 	  to directly read from or write to another process' address space.
 	  See the man page for more details.
 
+config MIHW
+	bool "MI driver"
+	default n
+	help
+	  Mi driver code
+
 config USELIB
 	bool "uselib syscall"
 	def_bool ALPHA || M68K || SPARC || X86_32 || IA32_EMULATION
@@ -1203,6 +1209,28 @@ config CHECKPOINT_RESTORE
 
 	  If unsure, say N here.
 
+config SCHED_BORE
+	bool "Burst-Oriented Response Enhancer"
+	default y
+	help
+	  In Desktop and Mobile computing, one might prefer interactive
+	  tasks to keep responsive no matter what they run in the background.
+
+	  Enabling this kernel feature modifies the scheduler to discriminate
+	  tasks by their burst time (runtime since it last went sleeping or
+	  yielding state) and prioritize those that run less bursty.
+	  Such tasks usually include window compositor, widgets backend,
+	  terminal emulator, video playback, games and so on.
+	  With a little impact to scheduling fairness, it may improve
+	  responsiveness especially under heavy background workload.
+
+	  BORE 7.0.0-cfs adapts burst penalties and inheritance to Linux 4.19
+	  CFS; it does not implement EEVDF deadlines or protected slices.
+	  Set kernel.sched_bore=0 to restore native task weights at runtime.
+	  See Documentation/scheduler/bore-cfs-port.txt for controls and limits.
+
+	  If unsure, say Y here.
+
 config SCHED_AUTOGROUP
 	bool "Automatic process group scheduling"
 	select CGROUPS
@@ -1214,6 +1242,19 @@ config SCHED_AUTOGROUP
 	  of workloads isolates aggressive CPU burners (like build jobs) from
 	  desktop applications.  Task group autogeneration is currently based
 	  upon task session.
+
+config SCHED_POC_SELECTOR
+	bool "Piece-Of-Cake Fast Idle CPU Selector"
+	depends on SMP
+	default y
+	help
+	  Idle CPU selector using cached bitmasks inspired by the scx_cake BPF
+	  scheduler. Reduces select_idle_cpu overhead by using bitmap scanning.
+
+	  This optimization does not affect scheduler fairness - it only
+	  speeds up the process of finding an idle CPU for task wakeup.
+
+	  If unsure, say Y.
 
 config SCHED_TUNE
 	bool "Boosting for CFS tasks (EXPERIMENTAL)"

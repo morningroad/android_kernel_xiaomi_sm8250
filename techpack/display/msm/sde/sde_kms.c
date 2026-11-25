@@ -1199,6 +1199,8 @@ static void sde_kms_complete_commit(struct msm_kms *kms,
 			pr_err("Connector Post kickoff failed rc=%d\n",
 					 rc);
 		}
+
+		sde_connector_fod_notify(connector);
 	}
 
 	_sde_kms_drm_check_dpms(old_state, DRM_PANEL_EVENT_BLANK);
@@ -1435,6 +1437,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 		.get_panel_vfp = dsi_display_get_panel_vfp,
 		.get_default_lms = dsi_display_get_default_lms,
 		.get_qsync_min_fps = dsi_display_get_qsync_min_fps,
+		.cmd_receive = dsi_display_cmd_receive,
 	};
 	static const struct sde_connector_ops wb_ops = {
 		.post_init =    sde_wb_connector_post_init,
@@ -1450,6 +1453,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 		.cmd_transfer = NULL,
 		.cont_splash_config = NULL,
 		.get_panel_vfp = NULL,
+		.cmd_receive = NULL,
 	};
 	static const struct sde_connector_ops dp_ops = {
 		.set_info_blob = dp_connnector_set_info_blob,
@@ -1468,6 +1472,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 		.cont_splash_config = NULL,
 		.get_panel_vfp = NULL,
 		.update_pps = dp_connector_update_pps,
+		.cmd_receive = NULL,
 	};
 	struct msm_display_info info;
 	struct drm_encoder *encoder;
@@ -1929,6 +1934,14 @@ static void _sde_kms_hw_destroy(struct sde_kms *sde_kms,
 	if (sde_kms->sid)
 		msm_iounmap(pdev, sde_kms->sid);
 	sde_kms->sid = NULL;
+
+	if (sde_kms->hw_sw_fuse)
+		sde_hw_sw_fuse_destroy(sde_kms->hw_sw_fuse);
+	sde_kms->hw_sw_fuse = NULL;
+
+	if (sde_kms->sw_fuse)
+		msm_iounmap(pdev, sde_kms->sw_fuse);
+	sde_kms->sw_fuse = NULL;
 
 	if (sde_kms->reg_dma)
 		msm_iounmap(pdev, sde_kms->reg_dma);
@@ -3552,6 +3565,19 @@ static int _sde_kms_hw_init_ioremap(struct sde_kms *sde_kms,
 	if (rc)
 		SDE_ERROR("dbg base register sid failed: %d\n", rc);
 
+	sde_kms->sw_fuse = msm_ioremap(platformdev, "swfuse_phys",
+					"swfuse_phys");
+	if (IS_ERR(sde_kms->sw_fuse)) {
+		sde_kms->sw_fuse = NULL;
+		SDE_DEBUG("sw_fuse is not defined");
+	} else {
+		sde_kms->sw_fuse_len = msm_iomap_size(platformdev,
+							"swfuse_phys");
+		rc =  sde_dbg_reg_register_base("sw_fuse", sde_kms->sw_fuse,
+						sde_kms->sw_fuse_len);
+		if (rc)
+			SDE_ERROR("dbg base register sw_fuse failed: %d\n", rc);
+	}
 error:
 	return rc;
 }
@@ -3756,6 +3782,17 @@ static int _sde_kms_hw_init_blocks(struct sde_kms *sde_kms,
 		goto perf_err;
 	}
 
+	if (sde_kms->sw_fuse) {
+		sde_kms->hw_sw_fuse = sde_hw_sw_fuse_init(sde_kms->sw_fuse,
+				sde_kms->sw_fuse_len, sde_kms->catalog);
+		if (IS_ERR(sde_kms->hw_sw_fuse)) {
+			SDE_ERROR("failed to init sw_fuse %ld\n",
+					PTR_ERR(sde_kms->hw_sw_fuse));
+			sde_kms->hw_sw_fuse = NULL;
+		}
+	} else {
+		sde_kms->hw_sw_fuse = NULL;
+	}
 	/*
 	 * _sde_kms_drm_obj_init should create the DRM related objects
 	 * i.e. CRTCs, planes, encoders, connectors and so forth
@@ -3932,27 +3969,4 @@ int sde_kms_handle_recovery(struct drm_encoder *encoder)
 {
 	SDE_EVT32(DRMID(encoder), MSM_ENC_ACTIVE_REGION);
 	return sde_encoder_wait_for_event(encoder, MSM_ENC_ACTIVE_REGION);
-}
-
-void sde_kms_trigger_early_wakeup(struct sde_kms *sde_kms,
-		struct drm_crtc *crtc)
-{
-	struct msm_drm_private *priv;
-	struct drm_encoder *drm_enc;
-
-	if (!sde_kms || !crtc) {
-		SDE_ERROR("invalid argument sde_kms %pK crtc %pK\n",
-			sde_kms, crtc);
-		return;
-	}
-
-	priv = sde_kms->dev->dev_private;
-
-	SDE_ATRACE_BEGIN("sde_kms_trigger_early_wakeup");
-	drm_for_each_encoder_mask(drm_enc, crtc->dev, crtc->state->encoder_mask)
-		sde_encoder_trigger_early_wakeup(drm_enc);
-
-	if (sde_kms->first_kickoff)
-		sde_power_scale_reg_bus(&priv->phandle, VOTE_INDEX_HIGH, false);
-	SDE_ATRACE_END("sde_kms_trigger_early_wakeup");
 }

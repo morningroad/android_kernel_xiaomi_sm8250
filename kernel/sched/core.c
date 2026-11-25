@@ -708,7 +708,11 @@ int tg_nop(struct task_group *tg, void *data)
 
 static void set_load_weight(struct task_struct *p, bool update_load)
 {
+#ifdef CONFIG_SCHED_BORE
+	int prio = effective_prio_bore(p);
+#else
 	int prio = p->static_prio - MAX_RT_PRIO;
+#endif
 	struct load_weight *load = &p->se.load;
 
 	/*
@@ -2935,6 +2939,8 @@ int wake_up_state(struct task_struct *p, unsigned int state)
 	return try_to_wake_up(p, state, 0, 1);
 }
 
+
+
 /*
  * Perform scheduler related setup for a newly forked process p.
  * p is forked by current.
@@ -2951,6 +2957,14 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	p->se.prev_sum_exec_runtime	= 0;
 	p->se.nr_migrations		= 0;
 	p->se.vruntime			= 0;
+#ifdef CONFIG_SCHED_POC_SELECTOR
+	/* no history yet: treat the new task's sync wakes as lies until proven */
+	p->poc_sync = POC_SYNC_INIT;
+#endif
+#ifdef CONFIG_SCHED_BORE
+	/* dup_task_struct copied caches and runtime state, even when disabled. */
+	memset(&p->bore, 0, sizeof(p->bore));
+#endif // CONFIG_SCHED_BORE
 	p->last_sleep_ts		= 0;
 	p->boost			= 0;
 	p->boost_expires		= 0;
@@ -3153,6 +3167,10 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	else
 		p->sched_class = &fair_sched_class;
 
+#ifdef CONFIG_SCHED_BORE
+	/* Reset inherited weight before seeding newborn PELT. */
+	set_load_weight(p, false);
+#endif
 	init_entity_runnable_average(&p->se);
 
 	/*
@@ -3187,6 +3205,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 #endif
 	return 0;
 }
+
 
 u64 to_ratio(u64 period, u64 runtime)
 {
@@ -4916,6 +4935,7 @@ int idle_cpu(int cpu)
 
 	return 1;
 }
+EXPORT_SYMBOL_GPL(idle_cpu);
 
 /**
  * available_idle_cpu - is a given CPU idle for enqueuing work.
@@ -7266,6 +7286,11 @@ void __init sched_init(void)
 {
 	int i, j;
 	unsigned long alloc_size = 0, ptr;
+
+#ifdef CONFIG_SCHED_BORE
+	sched_init_bore();
+
+#endif // CONFIG_SCHED_BORE
 
 	wait_bit_init();
 

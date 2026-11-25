@@ -291,6 +291,13 @@ static int pm8xxx_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 		return rc;
 	}
 
+	rc = regmap_bulk_read(rtc_dd->regmap, regs->alarm_ctrl, value, 1);
+	if (rc) {
+		dev_err(dev, "Read from ALARM CTRL failed\n");
+		return rc;
+	}
+	alarm->enabled = !!(value[0] & PM8xxx_RTC_ENABLE);
+
 	dev_dbg(dev, "Alarm set for - h:r:s=%d:%d:%d, d/m/y=%d/%d/%d\n",
 		alarm->time.tm_hour, alarm->time.tm_min,
 		alarm->time.tm_sec, alarm->time.tm_mday,
@@ -539,6 +546,7 @@ static int pm8xxx_rtc_probe(struct platform_device *pdev)
 	if (IS_ERR(rtc_dd->rtc)) {
 		dev_err(&pdev->dev, "%s: RTC registration failed (%ld)\n",
 			__func__, PTR_ERR(rtc_dd->rtc));
+		device_init_wakeup(&pdev->dev, 0);
 		return PTR_ERR(rtc_dd->rtc);
 	}
 
