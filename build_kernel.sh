@@ -132,6 +132,13 @@ PYEOF
     curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash -s master
     echo "[+] NoMount setup finished."
 
+    echo "==========================================="
+    echo " [*] Initializing VFS (Hybrid Mount) Setup"
+    echo "==========================================="
+    echo "[*] Downloading and running VFS remote setup script..."
+    curl -LSs "https://raw.githubusercontent.com/Hybrid-Mount/meta-hybrid_mount/dev/module/vfs/setup.sh" | bash
+    echo "[+] VFS setup finished."
+
     # Capture BakaSU version for display in CI logs/artifacts
     if [ -d "KernelSU/.git" ]; then
         KSU_LOCAL_VERSION=$(git -C KernelSU rev-list --count HEAD 2>/dev/null || echo "0")
