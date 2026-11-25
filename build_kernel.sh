@@ -129,7 +129,7 @@ PYEOF
     # Pin NoMount to master (v2.1.1). Upstream dev moved to mainline 6.16+
     # VFS renames (struct qstr name_snapshot), which breaks the build on this
     # 4.19 tree at fs/nomount/nomount.c:1373. master is safe.
-    curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash -s master
+    curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash
     echo "[+] NoMount setup finished."
 
     # Capture BakaSU version for display in CI logs/artifacts
